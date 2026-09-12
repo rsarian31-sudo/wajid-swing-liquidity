@@ -3,6 +3,17 @@ const CONFIRMATION_BARS = 6;
 const ATR_LENGTH = 14;
 const SL_ATR_BUFFER = 0.35;
 
+// Position management:
+// - TP1 is a milestone only; no position is closed there.
+// - TP2 closes 75% of the original position at +2R.
+// - The remaining 25% stays open for TP3.
+// - If TP2 is reached and the remaining 25% later hits SL, the trade is still a WIN:
+//   75% * +2R + 25% * -1R = +1.25R.
+// - If TP3 is reached after TP2: 75% * +2R + 25% * +3R = +2.25R.
+// - If SL is reached before TP2: -1R.
+// - When SL and a target are both touched in the same candle, SL is treated as first
+//   conservatively, so no partial close is credited for that candle.
+
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -22,8 +33,6 @@ export default async function handler(req, res) {
     const candles = data.candles || [];
     const swings = data.swings || { highs: [], lows: [] };
 
-    // The live canonical endpoint intentionally returns only recent sweeps.
-    // For history, reconstruct the same sweep condition across the full 500-candle set.
     const sweeps = detectHistoricalSweeps(candles, swings);
     const trades = buildHistory(candles, sweeps);
     const closed = trades.filter(t => t.status !== "OPEN");
@@ -73,23 +82,11 @@ function detectHistoricalSweeps(candles, swings) {
       if (!c) continue;
 
       if (level.type === "SWING_HIGH" && c.high > price && c.close < price) {
-        sweeps.push({
-          type: "BEARISH",
-          side: "HIGH",
-          index: i,
-          time: c.time,
-          level: { index: levelIndex, price }
-        });
+        sweeps.push({ type: "BEARISH", side: "HIGH", index: i, time: c.time, level: { index: levelIndex, price } });
       }
 
       if (level.type === "SWING_LOW" && c.low < price && c.close > price) {
-        sweeps.push({
-          type: "BULLISH",
-          side: "LOW",
-          index: i,
-          time: c.time,
-          level: { index: levelIndex, price }
-        });
+        sweeps.push({ type: "BULLISH", side: "LOW", index: i, time: c.time, level: { index: levelIndex, price } });
       }
     }
   }
@@ -142,31 +139,103 @@ function tradePlan(candles, signal, index) {
 }
 
 function resolveTrade(candles, signalIndex, plan, direction) {
+  let tp2Hit = false;
+  let tp2Time = null;
+  let tp2BarIndex = null;
+
   for (let i = signalIndex + 1; i < candles.length; i++) {
     const c = candles[i];
-    if (direction === "BUY") {
-      const hitSL = c.low <= plan.stopLoss;
-      const hitTP3 = c.high >= plan.tp3;
-      const hitTP2 = c.high >= plan.tp2;
-      const hitTP1 = c.high >= plan.tp1;
-      if (hitSL && (hitTP1 || hitTP2 || hitTP3)) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "SL and target touched in same candle; conservative SL" };
-      if (hitSL) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "STOP LOSS" };
-      if (hitTP3) return { status: "CLOSED", result: "WIN", realizedR: 3, exit: plan.tp3, exitTime: c.time, barIndex: i, reason: "TP3" };
-      if (hitTP2) return { status: "CLOSED", result: "WIN", realizedR: 2, exit: plan.tp2, exitTime: c.time, barIndex: i, reason: "TP2" };
-      if (hitTP1) return { status: "CLOSED", result: "WIN", realizedR: 1, exit: plan.tp1, exitTime: c.time, barIndex: i, reason: "TP1" };
-    } else {
-      const hitSL = c.high >= plan.stopLoss;
-      const hitTP3 = c.low <= plan.tp3;
-      const hitTP2 = c.low <= plan.tp2;
-      const hitTP1 = c.low <= plan.tp1;
-      if (hitSL && (hitTP1 || hitTP2 || hitTP3)) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "SL and target touched in same candle; conservative SL" };
-      if (hitSL) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "STOP LOSS" };
-      if (hitTP3) return { status: "CLOSED", result: "WIN", realizedR: 3, exit: plan.tp3, exitTime: c.time, barIndex: i, reason: "TP3" };
-      if (hitTP2) return { status: "CLOSED", result: "WIN", realizedR: 2, exit: plan.tp2, exitTime: c.time, barIndex: i, reason: "TP2" };
-      if (hitTP1) return { status: "CLOSED", result: "WIN", realizedR: 1, exit: plan.tp1, exitTime: c.time, barIndex: i, reason: "TP1" };
+    const hitSL = direction === "BUY" ? c.low <= plan.stopLoss : c.high >= plan.stopLoss;
+    const hitTP2 = direction === "BUY" ? c.high >= plan.tp2 : c.low <= plan.tp2;
+    const hitTP3 = direction === "BUY" ? c.high >= plan.tp3 : c.low <= plan.tp3;
+
+    if (!tp2Hit) {
+      // Before TP2, the whole position is still open. If SL and TP2/TP3 occur
+      // in the same candle, resolve conservatively as SL first.
+      if (hitSL && (hitTP2 || hitTP3)) {
+        return {
+          status: "CLOSED",
+          result: "LOSS",
+          realizedR: -1,
+          exit: plan.stopLoss,
+          exitTime: c.time,
+          barIndex: i,
+          reason: "SL before TP2; same-candle target treated conservatively"
+        };
+      }
+
+      if (hitSL) {
+        return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "STOP LOSS before TP2" };
+      }
+
+      if (hitTP2) {
+        tp2Hit = true;
+        tp2Time = c.time;
+        tp2BarIndex = i;
+        // 75% is now closed at +2R. The remaining 25% continues toward TP3/SL.
+        continue;
+      }
+
+      continue;
+    }
+
+    // TP2 has already closed 75%. Only the remaining 25% is now exposed.
+    if (hitSL && hitTP3) {
+      // Same-candle ambiguity after TP2: conservatively treat SL as first.
+      // Result is still a WIN because the 75% TP2 portion was already secured.
+      const realizedR = 0.75 * 2 + 0.25 * -1;
+      return {
+        status: "CLOSED",
+        result: "WIN",
+        realizedR,
+        exit: plan.stopLoss,
+        exitTime: c.time,
+        barIndex: i,
+        reason: "TP2 hit; 75% closed at +2R, remaining 25% hit SL"
+      };
+    }
+
+    if (hitSL) {
+      const realizedR = 0.75 * 2 + 0.25 * -1;
+      return {
+        status: "CLOSED",
+        result: "WIN",
+        realizedR,
+        exit: plan.stopLoss,
+        exitTime: c.time,
+        barIndex: i,
+        reason: "TP2 hit; 75% closed at +2R, remaining 25% hit SL"
+      };
+    }
+
+    if (hitTP3) {
+      const realizedR = 0.75 * 2 + 0.25 * 3;
+      return {
+        status: "CLOSED",
+        result: "WIN",
+        realizedR,
+        exit: plan.tp3,
+        exitTime: c.time,
+        barIndex: i,
+        reason: "TP2 hit (75% closed), then TP3 hit on remaining 25%"
+      };
     }
   }
-  return { status: "OPEN", result: "OPEN", realizedR: 0, exit: null, exitTime: null, barIndex: null, reason: "No SL/TP reached in available history" };
+
+  if (tp2Hit) {
+    // History ended after TP2: 75% is already realized at +2R and 25% is still open.
+    return {
+      status: "OPEN",
+      result: "OPEN",
+      realizedR: 1.5,
+      exit: plan.tp2,
+      exitTime: tp2Time,
+      barIndex: tp2BarIndex,
+      reason: "TP2 hit; 75% closed at +2R, remaining 25% open for TP3/SL"
+    };
+  }
+
+  return { status: "OPEN", result: "OPEN", realizedR: 0, exit: null, exitTime: null, barIndex: null, reason: "No SL/TP2 reached in available history" };
 }
 
 function buildHistory(candles, sweeps) {
@@ -195,7 +264,7 @@ function buildHistory(candles, sweeps) {
       tp2: Number(plan.tp2.toFixed(2)),
       tp3: Number(plan.tp3.toFixed(2)),
       risk: Number(plan.risk.toFixed(2)),
-      realizedR: outcome.realizedR,
+      realizedR: Number(Number(outcome.realizedR || 0).toFixed(2)),
       result: outcome.result,
       status: outcome.status,
       exit: outcome.exit == null ? null : Number(outcome.exit.toFixed(2)),
