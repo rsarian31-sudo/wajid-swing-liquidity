@@ -1,5 +1,4 @@
 const CANONICAL_API = "https://wajid-ai-signals.vercel.app/api/liquidity";
-const SWEEP_LOOKBACK = 8;
 const CONFIRMATION_BARS = 6;
 const ATR_LENGTH = 14;
 const SL_ATR_BUFFER = 0.35;
@@ -21,7 +20,12 @@ export default async function handler(req, res) {
     if (!response.ok || !data?.success) throw new Error(data?.error || "Canonical Swing Liquidity API error");
 
     const candles = data.candles || [];
-    const trades = buildHistory(candles, data.liquidity?.sweeps || []);
+    const swings = data.swings || { highs: [], lows: [] };
+
+    // The live canonical endpoint intentionally returns only recent sweeps.
+    // For history, reconstruct the same sweep condition across the full 500-candle set.
+    const sweeps = detectHistoricalSweeps(candles, swings);
+    const trades = buildHistory(candles, sweeps);
     const closed = trades.filter(t => t.status !== "OPEN");
     const wins = closed.filter(t => t.result === "WIN");
     const losses = closed.filter(t => t.result === "LOSS");
@@ -48,6 +52,50 @@ export default async function handler(req, res) {
   } catch (error) {
     return res.status(500).json({ success: false, error: error?.message || "History error" });
   }
+}
+
+function detectHistoricalSweeps(candles, swings) {
+  const sweeps = [];
+  const levels = [
+    ...(Array.isArray(swings.highs) ? swings.highs : []),
+    ...(Array.isArray(swings.lows) ? swings.lows : [])
+  ].sort((a, b) => Number(a.index) - Number(b.index));
+
+  for (const level of levels) {
+    const levelIndex = Number(level.index);
+    const confirmedIndex = Number(level.confirmedIndex ?? (levelIndex + 10));
+    const price = Number(level.price);
+    if (!Number.isFinite(levelIndex) || !Number.isFinite(confirmedIndex) || !Number.isFinite(price)) continue;
+
+    const start = Math.max(confirmedIndex, levelIndex + 1, 0);
+    for (let i = start; i < candles.length; i++) {
+      const c = candles[i];
+      if (!c) continue;
+
+      if (level.type === "SWING_HIGH" && c.high > price && c.close < price) {
+        sweeps.push({
+          type: "BEARISH",
+          side: "HIGH",
+          index: i,
+          time: c.time,
+          level: { index: levelIndex, price }
+        });
+      }
+
+      if (level.type === "SWING_LOW" && c.low < price && c.close > price) {
+        sweeps.push({
+          type: "BULLISH",
+          side: "LOW",
+          index: i,
+          time: c.time,
+          level: { index: levelIndex, price }
+        });
+      }
+    }
+  }
+
+  sweeps.sort((a, b) => a.index - b.index);
+  return sweeps;
 }
 
 function atrAt(candles, index, length = ATR_LENGTH) {
@@ -77,6 +125,7 @@ function tradePlan(candles, signal, index) {
   const sweepPrice = Number(signal.sweep?.level?.price);
   const atr = atrAt(candles, index);
   if (!Number.isFinite(entry) || !atr) return null;
+
   let sl;
   if (signal.direction === "BUY") {
     const structural = Number.isFinite(sweepPrice) ? sweepPrice : entry - atr;
@@ -85,6 +134,7 @@ function tradePlan(candles, signal, index) {
     const structural = Number.isFinite(sweepPrice) ? sweepPrice : entry + atr;
     sl = Math.max(structural, entry + atr * SL_ATR_BUFFER);
   }
+
   const risk = Math.max(Math.abs(entry - sl), atr * 0.25);
   return signal.direction === "BUY"
     ? { entry, stopLoss: sl, tp1: entry + risk, tp2: entry + risk * 2, tp3: entry + risk * 3, risk, atr }
@@ -110,7 +160,7 @@ function resolveTrade(candles, signalIndex, plan, direction) {
       const hitTP2 = c.low <= plan.tp2;
       const hitTP1 = c.low <= plan.tp1;
       if (hitSL && (hitTP1 || hitTP2 || hitTP3)) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "SL and target touched in same candle; conservative SL" };
-      if (hitSL) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: c.high >= plan.stopLoss ? plan.stopLoss : plan.stopLoss, exitTime: c.time, barIndex: i, reason: "STOP LOSS" };
+      if (hitSL) return { status: "CLOSED", result: "LOSS", realizedR: -1, exit: plan.stopLoss, exitTime: c.time, barIndex: i, reason: "STOP LOSS" };
       if (hitTP3) return { status: "CLOSED", result: "WIN", realizedR: 3, exit: plan.tp3, exitTime: c.time, barIndex: i, reason: "TP3" };
       if (hitTP2) return { status: "CLOSED", result: "WIN", realizedR: 2, exit: plan.tp2, exitTime: c.time, barIndex: i, reason: "TP2" };
       if (hitTP1) return { status: "CLOSED", result: "WIN", realizedR: 1, exit: plan.tp1, exitTime: c.time, barIndex: i, reason: "TP1" };
@@ -122,15 +172,18 @@ function resolveTrade(candles, signalIndex, plan, direction) {
 function buildHistory(candles, sweeps) {
   const trades = [];
   const usedConfirmation = new Set();
-  const ordered = sweeps.slice().sort((a, b) => a.index - b.index);
-  for (const sweep of ordered) {
+
+  for (const sweep of sweeps) {
     const confirmation = confirmSweep(candles, sweep);
     if (!confirmation.confirmed) continue;
+
     const key = `${confirmation.time}:${confirmation.direction}`;
     if (usedConfirmation.has(key)) continue;
     usedConfirmation.add(key);
+
     const plan = tradePlan(candles, { direction: confirmation.direction, price: confirmation.price, sweep }, confirmation.index);
     if (!plan) continue;
+
     const outcome = resolveTrade(candles, confirmation.index, plan, confirmation.direction);
     trades.push({
       id: `${confirmation.time}-${confirmation.direction}`,
@@ -150,5 +203,6 @@ function buildHistory(candles, sweeps) {
       reason: outcome.reason
     });
   }
+
   return trades;
 }
