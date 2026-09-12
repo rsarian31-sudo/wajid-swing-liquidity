@@ -1,0 +1,1 @@
+Trade history is calculated server-side from the canonical Swing Liquidity API.
