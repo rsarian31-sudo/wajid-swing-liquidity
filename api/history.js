@@ -10,6 +10,12 @@ const SL_ATR_BUFFER = 0.35;
 // - SL hit before TP2 = LOSS (-1R).
 // - If SL and TP2 are both touched in the same candle before TP2, resolve conservatively as SL.
 // - No 75%/25% partial-close calculation is used in history.
+//
+// History anti-spam rules:
+// - Only ONE trade may be open at a time.
+// - After a trade closes, the next setup is searched from the following candle.
+// - The same liquidity level can only produce one historical trade.
+// - This prevents overlapping BUY/SELL signals from the same market move.
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -106,6 +112,10 @@ function confirmSweep(candles, sweep) {
   const end = Math.min(candles.length - 1, sweep.index + CONFIRMATION_BARS);
   for (let i = start; i <= end; i++) {
     const c = candles[i], p = candles[i - 1];
+    if (!c || !p) continue;
+
+    // Confirmation must happen on a CLOSED candle.
+    // Keep the existing confirmation mathematics, but never confirm on the sweep candle itself.
     if (sweep.type === "BULLISH" && c.close > c.open && c.close > p.high) {
       return { confirmed: true, direction: "BUY", index: i, time: c.time, price: c.close, sweep };
     }
@@ -196,17 +206,31 @@ function resolveTrade(candles, signalIndex, plan, direction) {
 function buildHistory(candles, sweeps) {
   const trades = [];
   const usedConfirmation = new Set();
+  const usedLiquidityLevels = new Set();
+
+  // Process setups strictly from oldest to newest.
+  // Once a trade is opened, ignore every other setup until that trade closes.
+  let nextAvailableIndex = 0;
 
   for (const sweep of sweeps) {
+    if (sweep.index < nextAvailableIndex) continue;
+
+    const level = sweep.level || {};
+    const levelKey = `${sweep.side}:${Number(level.index)}:${Number(level.price).toFixed(4)}`;
+    if (usedLiquidityLevels.has(levelKey)) continue;
+
     const confirmation = confirmSweep(candles, sweep);
     if (!confirmation.confirmed) continue;
+    if (confirmation.index < nextAvailableIndex) continue;
 
     const key = `${confirmation.time}:${confirmation.direction}`;
     if (usedConfirmation.has(key)) continue;
-    usedConfirmation.add(key);
 
     const plan = tradePlan(candles, confirmation, confirmation.index);
     if (!plan) continue;
+
+    usedConfirmation.add(key);
+    usedLiquidityLevels.add(levelKey);
 
     const outcome = resolveTrade(candles, confirmation.index, plan, confirmation.direction);
     trades.push({
@@ -226,6 +250,15 @@ function buildHistory(candles, sweeps) {
       exitTime: outcome.exitTime,
       reason: outcome.reason
     });
+
+    // A second setup cannot open until this trade has actually closed.
+    if (outcome.barIndex != null) {
+      nextAvailableIndex = outcome.barIndex + 1;
+    } else {
+      // Current trade is still OPEN at the end of available history.
+      // Do not manufacture another trade after it.
+      break;
+    }
   }
 
   return trades;
