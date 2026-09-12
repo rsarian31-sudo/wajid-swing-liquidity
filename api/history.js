@@ -1,6 +1,7 @@
 const CANONICAL_API = "https://wajid-ai-signals.vercel.app/api/liquidity";
 const ATR_LENGTH = 14;
 const SL_ATR_BUFFER = 0.35;
+const MAX_SL_DISTANCE = 10.0;
 
 // Swing Liquidity trade lifecycle:
 // - SWING_HIGH -> SELL on the next candle.
@@ -12,6 +13,7 @@ const SL_ATR_BUFFER = 0.35;
 // - SL hit before TP2 = LOSS (-1R).
 // - TP3 never changes the result.
 // - If SL and TP2 are both touched in the same candle, resolve conservatively as SL.
+// - Setups with an SL distance greater than MAX_SL_DISTANCE are skipped entirely.
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -97,7 +99,11 @@ function buildTradePlan(candles, swing, entryIndex) {
     if (!(stopLoss > entry)) return null;
   }
 
-  const risk = Math.max(Math.abs(entry - stopLoss), atr * 0.25);
+  const slDistance = Math.abs(entry - stopLoss);
+  // Do not create trades with an oversized structural stop.
+  if (slDistance > MAX_SL_DISTANCE) return null;
+
+  const risk = Math.max(slDistance, atr * 0.25);
   return isBuy
     ? { direction: "BUY", entry, stopLoss, tp1: entry + risk, tp2: entry + risk * 2, tp3: entry + risk * 3, risk, atr }
     : { direction: "SELL", entry, stopLoss, tp1: entry - risk, tp2: entry - risk * 2, tp3: entry - risk * 3, risk, atr };
