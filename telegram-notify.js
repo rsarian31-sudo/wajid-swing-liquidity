@@ -1,6 +1,6 @@
 (function () {
   const KEY_PREFIX = "wajid_telegram_signal_key_";
-  const PAIRS = ["XAU/USD", "BTC/USD", "ETH/USD", "SOL/USD"];
+  const PAIRS = ["XAU/USD", "BTC/USD"];
   const INTERVAL = () => document.getElementById("tf")?.value || "15min";
 
   async function checkTelegramSignal(symbol, test = false) {
