@@ -1,4 +1,4 @@
-const CANONICAL_API = "https://wajid-ai-signals.vercel.app/api/liquidity";
+const CANONICAL_API = "https://wajid-swing-liquidity.vercel.app/api/liquidity-cached";
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
