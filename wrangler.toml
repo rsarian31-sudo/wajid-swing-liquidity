@@ -1,0 +1,26 @@
+name = "wajid-swing-liquidity"
+main = "cloudflare/entry.js"
+compatibility_date = "2026-09-14"
+workers_dev = true
+
+[assets]
+directory = "."
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+exclude = [
+  "node_modules/**",
+  ".git/**",
+  "cloudflare/**",
+  "functions/**",
+  "api/**",
+  "mt5/**",
+  "*.md",
+  "history-note.txt",
+  "telegram-notify.js",
+  "package.json",
+  "bun.lock",
+  "bun.lockb"
+]
+
+[vars]
+DEFAULT_SYMBOL = "XAU/USD"
