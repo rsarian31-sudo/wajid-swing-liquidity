@@ -1,7 +1,7 @@
 import { get, put } from "@vercel/blob";
 
 const CANONICAL_API = "https://wajid-ai-signals.vercel.app/api/liquidity";
-const PAIRS = ["XAU/USD", "BTC/USD"];
+const PAIRS = ["XAU/USD"];
 const INTERVALS = ["5min", "15min"];
 const STATE_PATH = "wajid-telegram/last-signal-keys.json";
 
