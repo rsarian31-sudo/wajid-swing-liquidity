@@ -1,4 +1,4 @@
-const CANONICAL_API = "https://wajid-ai-signals.vercel.app/api/liquidity";
+const CANONICAL_API = "https://wajid-ai-signals.vercel.app/api/liquidity-cached";
 const ATR_LENGTH = 14;
 const SL_ATR_BUFFER = 0.35;
 const GOLD_MAX_SL_DISTANCE = 10.0;
