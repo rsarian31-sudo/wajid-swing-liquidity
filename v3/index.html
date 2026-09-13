@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080b12">
+  <title>Wajid Swing Liquidity</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="brand">WAJID <span>SWING LIQUIDITY</span></div>
+      <div class="subbrand">Canonical XAU/USD signal terminal</div>
+    </div>
+    <div class="status"><i id="statusDot"></i><span id="statusText">CONNECTING</span></div>
+  </header>
+
+  <main class="layout">
+    <section class="hero card">
+      <div class="hero-copy">
+        <div class="eyebrow">LIVE SIGNAL</div>
+        <div id="signalValue" class="signal wait">WAIT</div>
+        <div id="signalMeta" class="muted">Waiting for canonical strategy data…</div>
+      </div>
+      <div class="hero-stats">
+        <div><small>PRICE</small><strong id="price">—</strong></div>
+        <div><small>SCORE</small><strong id="score">—</strong></div>
+        <div><small>PROBABILITY</small><strong id="probability">—</strong></div>
+      </div>
+    </section>
+
+    <section class="metrics">
+      <div class="metric card"><small>TRADES</small><strong id="trades">—</strong></div>
+      <div class="metric card"><small>WIN RATE</small><strong id="winRate">—</strong></div>
+      <div class="metric card"><small>WINS / LOSSES</small><strong id="winsLosses">—</strong></div>
+      <div class="metric card"><small>TOTAL R</small><strong id="totalR">—</strong></div>
+    </section>
+
+    <section class="chart card">
+      <div class="section-head">
+        <div><b>XAU/USD</b><span id="intervalLabel">15M</span></div>
+        <div class="tabs"><button data-interval="5min">5M</button><button class="active" data-interval="15min">15M</button></div>
+      </div>
+      <div id="chart"></div>
+    </section>
+
+    <section class="grid2">
+      <div class="card panel">
+        <div class="section-title">TRADE PLAN</div>
+        <div class="levels">
+          <div><span>ENTRY</span><b id="entry">—</b></div>
+          <div><span>STOP LOSS</span><b id="stop">—</b></div>
+          <div><span>TP1 · 1R</span><b id="tp1">—</b></div>
+          <div><span>TP2 · 2R</span><b id="tp2">—</b></div>
+          <div><span>TP3 · 3R</span><b id="tp3">—</b></div>
+          <div><span>RISK</span><b id="risk">—</b></div>
+        </div>
+      </div>
+      <div class="card panel">
+        <div class="section-title">STRATEGY DIAGNOSTICS</div>
+        <div class="levels">
+          <div><span>SWING HIGH</span><b id="swingHigh">—</b></div>
+          <div><span>SWING LOW</span><b id="swingLow">—</b></div>
+          <div><span>LIQUIDITY SWEEP</span><b id="sweep">—</b></div>
+          <div><span>CONFIRMATION</span><b id="confirmation">—</b></div>
+          <div><span>ATR</span><b id="atr">—</b></div>
+          <div><span>RISK FILTER</span><b id="riskFilter">—</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card history">
+      <div class="section-head"><div class="section-title">RECENT HISTORY</div><div class="muted">TP2 = official WIN</div></div>
+      <div class="table-wrap"><table><thead><tr><th>TIME</th><th>DIRECTION</th><th>ENTRY</th><th>RESULT</th><th>R</th></tr></thead><tbody id="historyBody"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody></table></div>
+    </section>
+  </main>
+
+  <footer>Wajid Swing Liquidity · XAU/USD · 5M / 15M · Strategy calculations remain server-side.</footer>
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="./app.js" type="module"></script>
+</body>
+</html>
