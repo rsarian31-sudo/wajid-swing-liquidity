@@ -16,7 +16,6 @@ export default async function handler(req, res) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return res.status(503).json({ success: false, error: "Telegram environment variables are missing" });
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ success: false, error: "Connect a Vercel Blob store first" });
 
   const state = await readState();
   const sent = [], skipped = [], errors = [];
@@ -27,7 +26,7 @@ export default async function handler(req, res) {
         const signal = await getSignal(symbol, interval);
         const direction = String(signal?.signal?.direction || "WAIT").toUpperCase();
         const plan = signal?.tradePlan || null;
-        if (direction !== "BUY" && direction !== "SELL" || !plan) {
+        if ((direction !== "BUY" && direction !== "SELL") || !plan) {
           skipped.push(`${symbol}|${interval}|WAIT`);
           continue;
         }
